@@ -1,10 +1,12 @@
-use std::{thread, time::Duration};
+use std::{fmt, thread, time::Duration, process};
 
 struct Game {
+    /// 100x150 grid of cells (for now)
     grid: Vec<Vec<Cell>>,
     generation: usize,
 }
 
+#[derive(PartialEq)]
 enum CellState {
     Live,
     Dead,
@@ -23,10 +25,20 @@ impl Cell {
 
 impl Game {
     pub fn new(seed: usize) -> Game {
-        let game = Game { grid: Vec::new(), generation: 0 };
+        let mut game = Game { grid: Vec::new(), generation: 0 };
+
+        for _ in 0..100 {
+            let mut row = Vec::new();
+
+            for _ in 0..150 {
+                row.push(Cell::new(CellState::Dead));
+            }
+
+            game.grid.push(row);
+        }
 
         // For now the grid will just be 100x100x
-        game.grid[50][50] = Cell::new(CellState:Lsive);
+        game.grid[50][50] = Cell::new(CellState::Live);
 
         game.set_cell_neighbors();
 
@@ -44,6 +56,31 @@ impl Game {
 
         // Any dead cell with exactly three live neighbours 
         // becomes a live cell, as if by reproduction
+
+        self.set_cell_neighbors();
+    }
+    fn set_cell_neighbors(&mut self) {
+        
+    }
+}
+
+impl fmt::Display for Game {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut grid = String::new();
+
+        for row in &self.grid {
+            for cell in row {
+                if cell.state == CellState::Dead {
+                    grid.push('▢');
+                } else {
+                    grid.push('■');
+                }
+            }
+
+            grid.push('\n');
+        }
+
+        write!(f, "{grid}")
     }
 }
 
@@ -56,5 +93,7 @@ fn main() {
         thread::sleep(Duration::from_secs(3));
 
         println!("{game}");
+
+        process::exit(0);
     }
 }
