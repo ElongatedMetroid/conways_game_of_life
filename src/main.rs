@@ -1,7 +1,7 @@
 use std::{fmt, thread, time::Duration, process};
 
 /// Height, Y
-const GRID_ROWS: usize = 100;
+const GRID_ROWS: usize = 60;
 /// Width, X
 const GRID_COLS: usize = 150;
 
@@ -12,7 +12,7 @@ struct Game {
     generation: usize,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 enum CellState {
     /// Cell is live (active)
     Live,
@@ -20,7 +20,7 @@ enum CellState {
     Dead,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Cell {
     /// Holds the current state of the cell
     state: CellState,
@@ -28,7 +28,7 @@ struct Cell {
     neighbors: Vec<Vec2>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Vec2 {
     x: usize, 
     y: usize,
@@ -48,6 +48,18 @@ impl Cell {
     pub fn is_live(&self) -> bool {
         self.state == CellState::Live
     }
+    /// Returns a usize containing the amount of neighbors alive
+    pub fn live_neighbor_count(&self, grid: &Vec<Vec<Cell>>) -> usize {
+        let mut live_count = 0;
+
+        for neighbor in &self.neighbors {
+            if grid[neighbor.y][neighbor.x].is_live() {
+                live_count+=1;
+            }
+        }
+
+        live_count
+    }
 }
 
 impl Game {
@@ -65,25 +77,46 @@ impl Game {
         }
 
         // For now the grid will just be 100x100x
-        game.grid[50][50] = Cell::new(CellState::Live);
+        game.grid[48][149] = Cell::new(CellState::Live);
+        game.grid[47][149] = Cell::new(CellState::Live);
+        game.grid[46][149] = Cell::new(CellState::Live);
 
         game.set_cell_neighbors();
 
         game
     }
     pub fn step(&mut self) {
-        // Any cell with fewer than two live neightbours dies
-        // as if by underpopulation
+        self.generation += 1;
+        let mut future = self.grid.clone();
 
-        // Any live cell with two or three live neightbours lives
-        // on to the next generation
+        for y in 0..GRID_ROWS {
+            for x in 0..GRID_COLS {
+                future[y][x].state = if self.grid[y][x].live_neighbor_count(&self.grid) < 2 {
+                    // Any cell with fewer than two live neighbors dies
+                    // as if by underpopulation
+                    CellState::Dead
+                } else if self.grid[y][x].live_neighbor_count(&self.grid) == 2 && self.grid[y][x].is_live() ||
+                          self.grid[y][x].live_neighbor_count(&self.grid) == 3 && self.grid[y][x].is_live() {
+                    // Any live cell with two or three live neightbours lives
+                    // on to the next generation
+                    CellState::Live
+                } else if self.grid[y][x].live_neighbor_count(&self.grid) > 3 && self.grid[y][x].is_live() {
+                    // Any live cell with more than three live neightbours
+                    // dies, as if by overpopulation
+                    CellState::Dead
+                } else if self.grid[y][x].live_neighbor_count(&self.grid) == 3 && !self.grid[y][x].is_live() {
+                    // Any dead cell with exactly three live neighbours 
+                    // becomes a live cell, as if by reproduction
+                    CellState::Live
+                } else {
+                    self.grid[y][x].state.clone()
+                };
+            }
+        }
 
-        // Any live cell with more than three live neightbours
-        // dies, as if by overpopulation
-
-        // Any dead cell with exactly three live neighbours 
-        // becomes a live cell, as if by reproduction
+        self.grid = future;
     }
+    /// Setup the cell neighbors while making the grid wrap
     fn set_cell_neighbors(&mut self) {
         for (y, row) in self.grid.iter_mut().enumerate() {
             for (x, cell) in row.iter_mut().enumerate() {
@@ -173,22 +206,18 @@ impl fmt::Display for Game {
             grid.push('\n');
         }
 
-        write!(f, "{grid}")
+        write!(f, "GENERATION: {}\n\n{grid}", self.generation)
     }
 }
 
 fn main() {
     let mut game = Game::new(0);
 
-    println!("{:#?}", game);
-
     loop {
-        game.step();
-
         thread::sleep(Duration::from_secs(1));
 
+        print!("\x1B[2J\x1B[1;1H");
         println!("{game}");
-
-        process::exit(0);
+        game.step();
     }
 }
