@@ -1,9 +1,11 @@
 use std::{fmt, thread, time::Duration, process};
 
+use rand::Rng;
+
 /// Height, Y
 const GRID_ROWS: usize = 60;
 /// Width, X
-const GRID_COLS: usize = 150;
+const GRID_COLS: usize = 220;
 
 #[derive(Debug)]
 struct Game {
@@ -76,10 +78,18 @@ impl Game {
             game.grid.push(row);
         }
 
-        // For now the grid will just be 100x100x
-        game.grid[48][149] = Cell::new(CellState::Live);
-        game.grid[47][149] = Cell::new(CellState::Live);
-        game.grid[46][149] = Cell::new(CellState::Live);
+        let mut seed = seed;
+        for y in 0..GRID_ROWS {
+            for x in 0..GRID_COLS {
+                game.grid[y][x] = if (seed % 2) == 0 {
+                    Cell::new(CellState::Live)
+                } else {
+                    Cell::new(CellState::Dead)
+                };
+
+                seed = seed.overflowing_add(rand::thread_rng().gen::<usize>()).0;
+            }
+        }
 
         game.set_cell_neighbors();
 
@@ -199,7 +209,7 @@ impl fmt::Display for Game {
                 if cell.is_live() {
                     grid.push('■');
                 } else {
-                    grid.push('▢');
+                    grid.push(' '); // ▢
                 }
             }
 
@@ -211,10 +221,10 @@ impl fmt::Display for Game {
 }
 
 fn main() {
-    let mut game = Game::new(0);
+    let mut game = Game::new(rand::thread_rng().gen());
 
     loop {
-        thread::sleep(Duration::from_secs(1));
+        thread::sleep(Duration::from_millis(500));
 
         print!("\x1B[2J\x1B[1;1H");
         println!("{game}");
