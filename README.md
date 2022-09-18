@@ -1,7 +1,7 @@
 # conways_game_of_life
 implementation of conways game of life
 
-![Alt text](https://www.github.com/NateNoNameSOFT/conways_game_of_life/example.png "example")
+![Example](https://github.com/NateNoNameSOFT/conways_game_of_life/blob/main/example.png?raw=true "example")
 
 # TODO
 - Saving system to save the current state of your simulation
