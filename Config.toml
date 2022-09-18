@@ -1,4 +1,4 @@
-dead_cell = ''
+dead_cell = ' '
 live_cell = '■'
 
 grid_rows = 30
