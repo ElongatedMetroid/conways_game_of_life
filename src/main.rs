@@ -70,32 +70,48 @@ impl Cell {
 }
 
 impl Game {
+    /// Create a new Game with the specified Config
     pub fn new(config: Rc<RefCell<Config>>) -> Game {
+        // Create an empty instance of a Game
         let mut game = Game { grid: Vec::new(), generation: 0, config };
 
+        // Cache the values of grid_rows and grid_cols
         let grid_rows = game.config.borrow().grid_rows.unwrap_or(GRID_ROWS);
         let grid_cols = game.config.borrow().grid_cols.unwrap_or(GRID_COLS);
 
+        // ----- Initialize Grid Vector -----
+        // Foreach row...
         for _ in 0..grid_rows {
+            // Create a vector that will hold the row...
             let mut row = Vec::new();
 
+            // Foreach column...
             for _ in 0..grid_cols {
+                // Push a new dead cell to the row
                 row.push(Cell::new(CellState::Dead));
             }
 
+            // Push the row to the grid
             game.grid.push(row);
         }
 
         // Saving so the user can later view what seed was used
         let seed = game.config.borrow().seed.unwrap_or(rand::thread_rng().gen());
+        // This vector will store the numbers we added to the seed in grid generation
         let mut numbers_added = Vec::new();
-        for y in 0..grid_rows {
-            for x in 0..grid_cols {
+        // Foreach row...
+        for row in &mut game.grid {
+            // Foreach cell in the row...
+            for cell in row {
+                // Generate a random usize
                 let random = rand::thread_rng().gen::<usize>();
+                // Push it to our vector of numbers (remember this vector is only so the results can be replicated)
                 numbers_added.push(random);
+                // Create a usage seed variable witch will be the seed + random
                 let usage_seed = seed.overflowing_add(random).0;
                 
-                game.grid[y][x] = if (usage_seed % 2) == 0 {
+                // Set the cell to live if the seed is even
+                *cell = if (usage_seed % 2) == 0 {
                     Cell::new(CellState::Live)
                 } else {
                     Cell::new(CellState::Dead)
@@ -103,48 +119,24 @@ impl Game {
             }
         }
 
+        // ----- Write Seed and Numbers Added to File -----
+
+        // Set each cells neighbors
         game.set_cell_neighbors();
 
         game
     }
-    pub fn step(&mut self) {
-        self.generation += 1;
-        let mut future = self.grid.clone();
-
-        for y in 0..self.config.borrow().grid_rows.unwrap_or(GRID_ROWS) {
-            for x in 0..self.config.borrow().grid_cols.unwrap_or(GRID_COLS) {
-                future[y][x].state = if self.grid[y][x].live_neighbor_count(&self.grid) < 2 {
-                    // Any cell with fewer than two live neighbors dies
-                    // as if by underpopulation
-                    CellState::Dead
-                } else if self.grid[y][x].live_neighbor_count(&self.grid) == 2 && self.grid[y][x].is_live() ||
-                          self.grid[y][x].live_neighbor_count(&self.grid) == 3 && self.grid[y][x].is_live() {
-                    // Any live cell with two or three live neightbours lives
-                    // on to the next generation
-                    CellState::Live
-                } else if self.grid[y][x].live_neighbor_count(&self.grid) > 3 && self.grid[y][x].is_live() {
-                    // Any live cell with more than three live neightbours
-                    // dies, as if by overpopulation
-                    CellState::Dead
-                } else if self.grid[y][x].live_neighbor_count(&self.grid) == 3 && !self.grid[y][x].is_live() {
-                    // Any dead cell with exactly three live neighbours 
-                    // becomes a live cell, as if by reproduction
-                    CellState::Live
-                } else {
-                    self.grid[y][x].state.clone()
-                };
-            }
-        }
-
-        self.grid = future;
-    }
     /// Setup the cell neighbors while making the grid wrap
     fn set_cell_neighbors(&mut self) {
+        // Cache the grid_rows and grid_cols values
         let grid_rows = self.config.borrow().grid_rows.unwrap_or(GRID_ROWS) - 1;
         let grid_cols = self.config.borrow().grid_cols.unwrap_or(GRID_COLS) - 1;
 
+        // Foreach row
         for (y, row) in self.grid.iter_mut().enumerate() {
+            // Foreach cell in row
             for (x, cell) in row.iter_mut().enumerate() {
+                // Guard for potential feature: Extendable and shrinkable grids during runtime
                 if !cell.neighbors.is_empty() {
                     cell.neighbors.clear();
                 }
@@ -216,30 +208,69 @@ impl Game {
             }
         }
     }
+    /// Apply the rules to the current grid
+    pub fn step(&mut self) {
+        // Increment generation
+        self.generation += 1;
+        // Create a grid that will hold the future (this is because the rules have to be applied to all cells simultainiously, and if we 
+        // modified grid while applying the rules that would not work, so instead we apply the result of the rules to future and keep grid
+        // unmodified)
+        let mut future = self.grid.clone();
+
+        // Foreach row
+        for y in 0..self.config.borrow().grid_rows.unwrap_or(GRID_ROWS) {
+            // Foreach column
+            for x in 0..self.config.borrow().grid_cols.unwrap_or(GRID_COLS) {
+                // Set the futures cell state to the presents current cell with the rules applied
+                future[y][x].state = if self.grid[y][x].live_neighbor_count(&self.grid) < 2 {
+                    // Any cell with fewer than two live neighbors dies
+                    // as if by underpopulation
+                    CellState::Dead
+                } else if self.grid[y][x].live_neighbor_count(&self.grid) == 2 && self.grid[y][x].is_live() ||
+                          self.grid[y][x].live_neighbor_count(&self.grid) == 3 && self.grid[y][x].is_live() {
+                    // Any live cell with two or three live neightbours lives
+                    // on to the next generation
+                    CellState::Live
+                } else if self.grid[y][x].live_neighbor_count(&self.grid) > 3 && self.grid[y][x].is_live() {
+                    // Any live cell with more than three live neightbours
+                    // dies, as if by overpopulation
+                    CellState::Dead
+                } else if self.grid[y][x].live_neighbor_count(&self.grid) == 3 && !self.grid[y][x].is_live() {
+                    // Any dead cell with exactly three live neighbours 
+                    // becomes a live cell, as if by reproduction
+                    CellState::Live
+                } else {
+                    self.grid[y][x].state.clone()
+                };
+            }
+        }
+
+        // Set the grid to the future
+        self.grid = future;
+    }
+    /// Print the grid
     pub fn show(&self) {
+        // Clear the terminal
         print!("\x1B[2J\x1B[1;1H");
 
-        let mut grid = String::new();
+        println!("Generation: {}", self.generation);
 
         for row in &self.grid {
             for cell in row {
                 if cell.is_live() {
-                    grid.push(self.config.borrow().live_cell.unwrap_or('■'));
+                    print!("{}", self.config.borrow().live_cell.unwrap_or('■'));
                 } else {
-                    grid.push(self.config.borrow().dead_cell.unwrap_or(' ')); // ▢
+                    print!("{}", self.config.borrow().dead_cell.unwrap_or(' '));
                 }
             }
 
-            grid.push('\n');
+            print!("\n");
         }
-
-        println!("GENERATION: {}\n\n{grid}", self.generation);
     }
 }
 
 fn main() {
-    let config = Config::new("Config.toml").unwrap();
-    let config = Rc::new(RefCell::new(config));
+    let config = Rc::new(RefCell::new(Config::new("Config.toml").unwrap()));
     let mut game = Game::new(Rc::clone(&config));
 
     loop {
