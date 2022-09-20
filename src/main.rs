@@ -1,4 +1,4 @@
-use std::{fmt, thread, time::Duration, process};
+use std::{thread, time::Duration, rc::Rc, cell::RefCell};
 
 use config::Config;
 use rand::Rng;
@@ -15,6 +15,8 @@ struct Game {
     /// 100x150 grid of cells (for now)
     grid: Vec<Vec<Cell>>,
     generation: usize,
+
+    config: Rc<RefCell<Config>>,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -68,42 +70,49 @@ impl Cell {
 }
 
 impl Game {
-    pub fn new(config: &Config) -> Game {
-        let mut game = Game { grid: Vec::new(), generation: 0 };
+    pub fn new(config: Rc<RefCell<Config>>) -> Game {
+        let mut game = Game { grid: Vec::new(), generation: 0, config };
 
-        for _ in 0..config.grid_rows.unwrap_or(GRID_ROWS) {
+        let grid_rows = game.config.borrow().grid_rows.unwrap_or(GRID_ROWS);
+        let grid_cols = game.config.borrow().grid_cols.unwrap_or(GRID_COLS);
+
+        for _ in 0..grid_rows {
             let mut row = Vec::new();
 
-            for _ in 0..config.grid_cols.unwrap_or(GRID_COLS) {
+            for _ in 0..grid_cols {
                 row.push(Cell::new(CellState::Dead));
             }
 
             game.grid.push(row);
         }
 
-        let mut seed = config.seed.unwrap_or(rand::thread_rng().gen());
-        for y in 0..config.grid_rows.unwrap_or(GRID_ROWS) {
-            for x in 0..config.grid_cols.unwrap_or(GRID_COLS) {
-                game.grid[y][x] = if (seed % 2) == 0 {
+        // Saving so the user can later view what seed was used
+        let seed = game.config.borrow().seed.unwrap_or(rand::thread_rng().gen());
+        let mut numbers_added = Vec::new();
+        for y in 0..grid_rows {
+            for x in 0..grid_cols {
+                let random = rand::thread_rng().gen::<usize>();
+                numbers_added.push(random);
+                let usage_seed = seed.overflowing_add(random).0;
+                
+                game.grid[y][x] = if (usage_seed % 2) == 0 {
                     Cell::new(CellState::Live)
                 } else {
                     Cell::new(CellState::Dead)
                 };
-
-                seed = seed.overflowing_add(rand::thread_rng().gen::<usize>()).0;
             }
         }
 
-        game.set_cell_neighbors(&config);
+        game.set_cell_neighbors();
 
         game
     }
-    pub fn step(&mut self, config: &Config) {
+    pub fn step(&mut self) {
         self.generation += 1;
         let mut future = self.grid.clone();
 
-        for y in 0..config.grid_rows.unwrap_or(GRID_ROWS) {
-            for x in 0..config.grid_cols.unwrap_or(GRID_COLS) {
+        for y in 0..self.config.borrow().grid_rows.unwrap_or(GRID_ROWS) {
+            for x in 0..self.config.borrow().grid_cols.unwrap_or(GRID_COLS) {
                 future[y][x].state = if self.grid[y][x].live_neighbor_count(&self.grid) < 2 {
                     // Any cell with fewer than two live neighbors dies
                     // as if by underpopulation
@@ -130,7 +139,10 @@ impl Game {
         self.grid = future;
     }
     /// Setup the cell neighbors while making the grid wrap
-    fn set_cell_neighbors(&mut self, config: &Config) {
+    fn set_cell_neighbors(&mut self) {
+        let grid_rows = self.config.borrow().grid_rows.unwrap_or(GRID_ROWS) - 1;
+        let grid_cols = self.config.borrow().grid_cols.unwrap_or(GRID_COLS) - 1;
+
         for (y, row) in self.grid.iter_mut().enumerate() {
             for (x, cell) in row.iter_mut().enumerate() {
                 if !cell.neighbors.is_empty() {
@@ -140,39 +152,39 @@ impl Game {
                 cell.neighbors.push(
                     // Wrap to bottom right if overflow
                     Vec2::new(if x.overflowing_sub(1).1 {
-                        config.grid_cols.unwrap_or(GRID_COLS) - 1
+                        grid_cols
                     } else { x - 1 }, if y.overflowing_sub(1).1 {
-                        config.grid_rows.unwrap_or(GRID_ROWS) - 1
+                        grid_rows
                     } else { y - 1 })
                 );
                 // Top
                 cell.neighbors.push(
                     // Wrap y to the bottom y on the same x avis
                     Vec2::new(x, if y.overflowing_sub(1).1 {
-                        config.grid_rows.unwrap_or(GRID_ROWS) - 1
+                        grid_rows
                     } else { y - 1 })
                 );
                 // Top Right
                 cell.neighbors.push(
                     // Wrap to bottom left
-                    Vec2::new(if x+1 > config.grid_cols.unwrap_or(GRID_COLS) - 1 {
+                    Vec2::new(if x+1 > grid_cols {
                         // All the way left on x
                         0
                     } else { x + 1 }, if y.overflowing_sub(1).1 {
-                        config.grid_rows.unwrap_or(GRID_ROWS) - 1
+                        grid_rows
                     } else { y - 1 })
                 );
                 // Left
                 cell.neighbors.push(
                     // Wrap to right
                     Vec2::new(if x.overflowing_sub(1).1 {
-                        config.grid_cols.unwrap_or(GRID_COLS) - 1
+                        grid_cols
                     } else { x - 1 }, y)
                 );
                 // Right
                 cell.neighbors.push(
                     // Wrap to left
-                    Vec2::new(if x+1 > config.grid_cols.unwrap_or(GRID_COLS) - 1 {
+                    Vec2::new(if x+1 > grid_cols {
                         0
                     } else { x + 1 }, y)
                 );
@@ -180,31 +192,31 @@ impl Game {
                 cell.neighbors.push(
                     // Wrap to top right
                     Vec2::new(if x.overflowing_sub(1).1 {
-                        config.grid_cols.unwrap_or(GRID_COLS) - 1
-                    } else { x - 1 }, if y+1 > config.grid_rows.unwrap_or(GRID_ROWS) - 1 {
+                        grid_cols
+                    } else { x - 1 }, if y+1 > grid_rows {
                         0
                     } else { y + 1 })
                 );
                 // Bottom
                 cell.neighbors.push(
                     // Wrap to top
-                    Vec2::new(x, if y+1 > config.grid_rows.unwrap_or(GRID_ROWS) - 1 {
+                    Vec2::new(x, if y+1 > grid_rows {
                         0
                     } else { y + 1 })
                 );
                 // Bottom Right
                 cell.neighbors.push(
                     // Wrap to top left
-                    Vec2::new(if x+1 > config.grid_cols.unwrap_or(GRID_COLS) - 1 {
+                    Vec2::new(if x+1 > grid_cols {
                         0
-                    } else { x + 1 }, if y+1 > config.grid_rows.unwrap_or(GRID_ROWS) - 1 {
+                    } else { x + 1 }, if y+1 > grid_rows {
                         0
                     } else { y + 1 })
                 );
             }
         }
     }
-    pub fn show(&self, config: &Config) {
+    pub fn show(&self) {
         print!("\x1B[2J\x1B[1;1H");
 
         let mut grid = String::new();
@@ -212,9 +224,9 @@ impl Game {
         for row in &self.grid {
             for cell in row {
                 if cell.is_live() {
-                    grid.push(config.live_cell.unwrap_or('■'));
+                    grid.push(self.config.borrow().live_cell.unwrap_or('■'));
                 } else {
-                    grid.push(config.dead_cell.unwrap_or(' ')); // ▢
+                    grid.push(self.config.borrow().dead_cell.unwrap_or(' ')); // ▢
                 }
             }
 
@@ -226,17 +238,19 @@ impl Game {
 }
 
 fn main() {
-    let mut config = Config::new("Config.toml").unwrap();
-    let mut game = Game::new(&config);
+    let config = Config::new("Config.toml").unwrap();
+    let config = Rc::new(RefCell::new(config));
+    let mut game = Game::new(Rc::clone(&config));
 
     loop {
-        if config.refresh().unwrap() {
-            game.set_cell_neighbors(&config);
+        // If configuration was updated...
+        if config.borrow_mut().refresh().unwrap() {
+            game.set_cell_neighbors();
         }
 
-        thread::sleep(Duration::from_millis(config.speed.unwrap_or(1000)));
+        game.show();
+        game.step();
 
-        game.show(&config);
-        game.step(&config);
+        thread::sleep(Duration::from_millis(config.borrow().speed.unwrap_or(0)));
     }
 }
