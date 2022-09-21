@@ -5,7 +5,11 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[profile.release]
+debug = true
+
 [dependencies]
+device_query = "1.1.1"
 rand = "0.8.5"
 serde = "1.0.144"
 serde_derive = "1.0.144"

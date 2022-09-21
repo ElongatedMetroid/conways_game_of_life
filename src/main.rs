@@ -1,6 +1,7 @@
-use std::{thread, time::Duration, rc::Rc, cell::RefCell};
+use std::{thread, time::Duration, sync::{mpsc, Arc, Mutex}, process};
 
 use config::Config;
+use device_query::{DeviceState, DeviceQuery, Keycode};
 use rand::Rng;
 
 mod config;
@@ -16,10 +17,10 @@ struct Game {
     grid: Vec<Vec<Cell>>,
     generation: usize,
 
-    config: Rc<RefCell<Config>>,
+    config: Arc<Mutex<Config>>,
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 enum CellState {
     /// Cell is live (active)
     Live,
@@ -56,7 +57,7 @@ impl Cell {
         self.state == CellState::Live
     }
     /// Returns a usize containing the amount of neighbors alive
-    pub fn live_neighbor_count(&self, grid: &Vec<Vec<Cell>>) -> usize {
+    pub fn live_neighbor_count(&self, grid: &[Vec<Cell>]) -> usize {
         let mut live_count = 0;
 
         for neighbor in &self.neighbors {
@@ -71,13 +72,13 @@ impl Cell {
 
 impl Game {
     /// Create a new Game with the specified Config
-    pub fn new(config: Rc<RefCell<Config>>) -> Game {
+    pub fn new(config: Arc<Mutex<Config>>) -> Game {
         // Create an empty instance of a Game
         let mut game = Game { grid: Vec::new(), generation: 0, config };
 
         // Cache the values of grid_rows and grid_cols
-        let grid_rows = game.config.borrow().grid_rows.unwrap_or(GRID_ROWS);
-        let grid_cols = game.config.borrow().grid_cols.unwrap_or(GRID_COLS);
+        let grid_rows = game.config.lock().unwrap().grid_rows.unwrap_or(GRID_ROWS);
+        let grid_cols = game.config.lock().unwrap().grid_cols.unwrap_or(GRID_COLS);
 
         // ----- Initialize Grid Vector -----
         // Foreach row...
@@ -96,7 +97,7 @@ impl Game {
         }
 
         // Saving so the user can later view what seed was used
-        let seed = game.config.borrow().seed.unwrap_or(rand::thread_rng().gen());
+        let seed = game.config.lock().unwrap().seed.unwrap_or_else( || rand::thread_rng().gen());
         // This vector will store the numbers we added to the seed in grid generation
         let mut numbers_added = Vec::new();
         // Foreach row...
@@ -129,8 +130,8 @@ impl Game {
     /// Setup the cell neighbors while making the grid wrap
     fn set_cell_neighbors(&mut self) {
         // Cache the grid_rows and grid_cols values
-        let grid_rows = self.config.borrow().grid_rows.unwrap_or(GRID_ROWS) - 1;
-        let grid_cols = self.config.borrow().grid_cols.unwrap_or(GRID_COLS) - 1;
+        let grid_rows = self.config.lock().unwrap().grid_rows.unwrap_or(GRID_ROWS) - 1;
+        let grid_cols = self.config.lock().unwrap().grid_cols.unwrap_or(GRID_COLS) - 1;
 
         // Foreach row
         for (y, row) in self.grid.iter_mut().enumerate() {
@@ -217,10 +218,13 @@ impl Game {
         // unmodified)
         let mut future = self.grid.clone();
 
+        let grid_rows = self.config.lock().unwrap().grid_rows.unwrap_or(GRID_ROWS);
+        let grid_cols = self.config.lock().unwrap().grid_cols.unwrap_or(GRID_COLS);
+            
         // Foreach row
-        for y in 0..self.config.borrow().grid_rows.unwrap_or(GRID_ROWS) {
+        for y in 0..grid_rows {
             // Foreach column
-            for x in 0..self.config.borrow().grid_cols.unwrap_or(GRID_COLS) {
+            for x in 0..grid_cols {
                 // Set the futures cell state to the presents current cell with the rules applied
                 future[y][x].state = if self.grid[y][x].live_neighbor_count(&self.grid) < 2 {
                     // Any cell with fewer than two live neighbors dies
@@ -258,30 +262,84 @@ impl Game {
         for row in &self.grid {
             for cell in row {
                 if cell.is_live() {
-                    print!("{}", self.config.borrow().live_cell.unwrap_or('■'));
+                    print!("{}", self.config.lock().unwrap().live_cell.unwrap_or('■'));
                 } else {
-                    print!("{}", self.config.borrow().dead_cell.unwrap_or(' '));
+                    print!("{}", self.config.lock().unwrap().dead_cell.unwrap_or(' '));
                 }
             }
 
-            print!("\n");
+            println!();
         }
     }
 }
 
+enum Command {
+    Pause, 
+    Unpause,
+    SaveSeed,
+    SaveCurrentState,
+    IncGen,
+    DecGen,
+}
+
 fn main() {
-    let config = Rc::new(RefCell::new(Config::new("Config.toml").unwrap()));
-    let mut game = Game::new(Rc::clone(&config));
+    let config = Arc::new(Mutex::new(Config::new("Config.toml").unwrap()));
+    let mut game = Game::new(Arc::clone(&config));
 
-    loop {
-        // If configuration was updated...
-        if config.borrow_mut().refresh().unwrap() {
-            game.set_cell_neighbors();
+    let (tx, rx) = mpsc::channel();
+
+    let game_thread = thread::spawn(move || {
+        let mut paused = false;
+
+        loop {
+            match rx.try_recv() {
+                Ok(command) => {
+                    match command {
+                        Command::Pause => paused = true,
+                        Command::Unpause => paused = false,
+                        Command::SaveSeed => todo!(),
+                        Command::SaveCurrentState => todo!(),
+                        Command::IncGen => todo!(),
+                        Command::DecGen => todo!(),
+                    }
+                }
+                Err(_) => (),
+            }
+
+            if !paused {
+                config.lock().unwrap().refresh().unwrap();
+
+                game.show();
+                game.step();
+                
+                thread::sleep(Duration::from_millis(config.lock().unwrap().speed.unwrap_or(0)));
+            }
         }
+    });
 
-        game.show();
-        game.step();
+    let input_thread = thread::spawn(move || {
+        let device_state = DeviceState::new();
+        
+        loop {
+            loop {
+                let keys = device_state.get_keys();
 
-        thread::sleep(Duration::from_millis(config.borrow().speed.unwrap_or(0)));
-    }
+                for key in keys {
+                    match key {
+                        Keycode::Q => process::exit(0),
+                        Keycode::P => tx.send(Command::Pause).unwrap(),
+                        Keycode::O => tx.send(Command::Unpause).unwrap(),
+                        Keycode::S => tx.send(Command::SaveSeed).unwrap(),
+                        Keycode::C => tx.send(Command::SaveCurrentState).unwrap(),
+
+                        Keycode::Right => tx.send(Command::IncGen).unwrap(),
+                        Keycode::Left => tx.send(Command::DecGen).unwrap(),
+                        _ => (),
+                    }
+                }
+            }
+        }
+    });
+
+    loop {}
 }
