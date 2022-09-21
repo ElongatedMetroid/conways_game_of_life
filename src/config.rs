@@ -2,7 +2,7 @@ use std::fs;
 
 use serde_derive::Deserialize;
 
-#[derive(Deserialize, PartialEq, Debug)]
+#[derive(Deserialize, PartialEq, Eq, Debug)]
 pub struct Config {
     file_name: Option<String>,
 
