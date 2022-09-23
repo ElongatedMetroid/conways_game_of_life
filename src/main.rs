@@ -1,14 +1,15 @@
-use std::{thread, time::Duration, sync::{mpsc, Arc, Mutex}, process};
-
-use config::Config;
-use device_query::{DeviceState, DeviceQuery, Keycode};
+use std::{thread, time::Duration, sync::{mpsc, Arc, Mutex}, process, io::{self, Write}, fs::File};
+use crossterm::{terminal::{ClearType, self}, event::{self, Event, KeyEvent, KeyCode}, cursor};
 use rand::Rng;
 
 mod config;
 
-/// Height, Y
+use config::Config;
+use serde_derive::Serialize;
+
+/// Height, Y (Default)
 const GRID_ROWS: usize = 50;
-/// Width, X
+/// Width, X (Default)
 const GRID_COLS: usize = 50;
 
 #[derive(Debug)]
@@ -18,6 +19,9 @@ struct Game {
     generation: usize,
 
     config: Arc<Mutex<Config>>,
+
+    seed: usize,
+    numbers_added: Vec<usize>,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -74,7 +78,7 @@ impl Game {
     /// Create a new Game with the specified Config
     pub fn new(config: Arc<Mutex<Config>>) -> Game {
         // Create an empty instance of a Game
-        let mut game = Game { grid: Vec::new(), generation: 0, config };
+        let mut game = Game { grid: Vec::new(), generation: 0, config, seed: 0, numbers_added: Vec::new() };
 
         // Cache the values of grid_rows and grid_cols
         let grid_rows = game.config.lock().unwrap().grid_rows.unwrap_or(GRID_ROWS);
@@ -97,9 +101,7 @@ impl Game {
         }
 
         // Saving so the user can later view what seed was used
-        let seed = game.config.lock().unwrap().seed.unwrap_or_else( || rand::thread_rng().gen());
-        // This vector will store the numbers we added to the seed in grid generation
-        let mut numbers_added = Vec::new();
+        game.seed = game.config.lock().unwrap().seed.unwrap_or_else( || rand::thread_rng().gen());
         // Foreach row...
         for row in &mut game.grid {
             // Foreach cell in the row...
@@ -107,9 +109,9 @@ impl Game {
                 // Generate a random usize
                 let random = rand::thread_rng().gen::<usize>();
                 // Push it to our vector of numbers (remember this vector is only so the results can be replicated)
-                numbers_added.push(random);
+                game.numbers_added.push(random);
                 // Create a usage seed variable witch will be the seed + random
-                let usage_seed = seed.overflowing_add(random).0;
+                let usage_seed = game.seed.overflowing_add(random).0;
                 
                 // Set the cell to live if the seed is even
                 *cell = if (usage_seed % 2) == 0 {
@@ -255,9 +257,8 @@ impl Game {
     /// Print the grid
     pub fn show(&self) {
         // Clear the terminal
-        print!("\x1B[2J\x1B[1;1H");
-
-        println!("Generation: {}", self.generation);
+        println!("{}{}Generation: {}", terminal::Clear(ClearType::All), cursor::MoveTo(1, 1), self.generation);
+        io::stdout().flush().unwrap();
 
         for row in &self.grid {
             for cell in row {
@@ -270,14 +271,40 @@ impl Game {
 
             println!();
         }
+
+        io::stdout().flush().unwrap();
+    }
+
+    pub fn save_seed(&self, file_name: &str) {
+        #[derive(Serialize)]
+        struct SeedSave {
+            seed: usize,
+            numbers_added: Vec<usize>,
+        }
+
+        let mut f = File::create(file_name).unwrap();
+
+        let seed_save = SeedSave {
+            seed: self.seed,
+            numbers_added: self.numbers_added.clone(),
+        };
+
+        let toml = toml::to_string(&seed_save).unwrap();
+
+        f.write_all(toml.as_bytes()).unwrap();
+    }
+    pub fn save_state(&self, file_name: &str) {
+
     }
 }
 
 enum Command {
     Pause, 
     Unpause,
-    SaveSeed,
-    SaveCurrentState,
+    // Save seed to file name
+    SaveSeed(String),
+    // Save state to file name
+    SaveCurrentState(String),
     IncGen,
     DecGen,
 }
@@ -297,10 +324,18 @@ fn main() {
                     match command {
                         Command::Pause => paused = true,
                         Command::Unpause => paused = false,
-                        Command::SaveSeed => todo!(),
-                        Command::SaveCurrentState => todo!(),
-                        Command::IncGen => todo!(),
-                        Command::DecGen => todo!(),
+                        Command::SaveSeed(file_name) => game.save_seed(file_name.as_str()),
+                        Command::SaveCurrentState(file_name) => game.save_state(file_name.as_str()),
+                        Command::IncGen => {
+                            paused = true;
+                            game.step();
+                            game.show();
+                        },
+                        Command::DecGen => {
+                            paused = true;
+                            //game.step_back();
+                            game.show();
+                        },
                     }
                 }
                 Err(_) => (),
@@ -318,28 +353,32 @@ fn main() {
     });
 
     let input_thread = thread::spawn(move || {
-        let device_state = DeviceState::new();
+        //let _raw = terminal::enable_raw_mode().unwrap();
         
+        let read_additional_data = || {
+            let mut buf = String::new();
+            io::stdin().read_line(&mut buf).unwrap();
+            buf
+        };
+
         loop {
-            loop {
-                let keys = device_state.get_keys();
-
-                for key in keys {
-                    match key {
-                        Keycode::Q => process::exit(0),
-                        Keycode::P => tx.send(Command::Pause).unwrap(),
-                        Keycode::O => tx.send(Command::Unpause).unwrap(),
-                        Keycode::S => tx.send(Command::SaveSeed).unwrap(),
-                        Keycode::C => tx.send(Command::SaveCurrentState).unwrap(),
-
-                        Keycode::Right => tx.send(Command::IncGen).unwrap(),
-                        Keycode::Left => tx.send(Command::DecGen).unwrap(),
-                        _ => (),
-                    }
+            match event::read().unwrap() {
+                Event::Key(KeyEvent { code: KeyCode::Char('q'), .. }) => process::exit(0),
+                Event::Key(KeyEvent { code: KeyCode::Char('p'), .. }) => tx.send(Command::Pause).unwrap(),
+                Event::Key(KeyEvent { code: KeyCode::Char('o'), .. }) => tx.send(Command::Unpause).unwrap(),
+                Event::Key(KeyEvent { code: KeyCode::Char('s'), .. }) => {
+                    tx.send(Command::SaveSeed(read_additional_data())).unwrap();
                 }
+                Event::Key(KeyEvent { code: KeyCode::Char('c'), .. }) => {
+                    tx.send(Command::SaveCurrentState(read_additional_data())).unwrap();
+                }
+                Event::Key(KeyEvent { code: KeyCode::Left, .. }) => tx.send(Command::DecGen).unwrap(),
+                Event::Key(KeyEvent { code: KeyCode::Right, .. }) => tx.send(Command::IncGen).unwrap(),
+                _ => (),
             }
         }
     });
 
-    loop {}
+    game_thread.join().unwrap();
+    input_thread.join().unwrap();
 }

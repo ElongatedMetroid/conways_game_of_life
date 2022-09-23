@@ -4,4 +4,6 @@ live_cell = '■'
 grid_rows = 30
 grid_cols = 220
 
-speed = 1000
+speed = 250
+
+#seed = seed.toml
