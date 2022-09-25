@@ -9,7 +9,7 @@ edition = "2021"
 debug = true
 
 [dependencies]
-device_query = "1.1.1"
+crossterm = "0.25.0"
 rand = "0.8.5"
 serde = "1.0.144"
 serde_derive = "1.0.144"
